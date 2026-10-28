@@ -1,0 +1,372 @@
+{
+  "name": "Topic 5 - Loop Processing, Pagination & Rate-Limited Batching",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "6e2697a2-159e-4e3a-9773-6cba32a76201",
+      "name": "Manual_Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f8d16790-a7d1-424a-9ef2-5b927df8b1a1",
+              "name": "pageSize",
+              "value": 10,
+              "type": "number"
+            },
+            {
+              "id": "8c919d67-6e47-49f3-855c-0ff3d526719b",
+              "name": "batchSize",
+              "value": 5,
+              "type": "number"
+            },
+            {
+              "id": "4ea855d0-994c-4977-8025-a1c1d6832db2",
+              "name": "waitSeconds",
+              "value": 2,
+              "type": "number"
+            },
+            {
+              "id": "f408ce61-e5fa-4f51-b0e6-993d0d829f04",
+              "name": "maxPages",
+              "value": 10,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a76e73bb-5231-41be-9407-e85d933ca9c1",
+      "name": "Set_Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -780,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Global memory state for active pagination execution\nconst staticData = $getWorkflowStaticData('global');\nstaticData.accumulatedUsers = [];\nstaticData.currentPage = 1;\n\nreturn [{\n  json: {\n    currentPage: 1,\n    pageSize: $('Set_Config').first().json.pageSize || 10,\n    status: \"START_FETCH\"\n  }\n}];"
+      },
+      "id": "ce3a696a-3642-4f36-b633-89981be1e43b",
+      "name": "Code_InitPaging",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://jsonplaceholder.typicode.com/users",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "_page",
+              "value": "={{ $('Code_AccumulatePage').isExecuted ? $('Code_AccumulatePage').last().json.currentPage : 1 }}"
+            },
+            {
+              "name": "_limit",
+              "value": "={{ $('Set_Config').first().json.pageSize || 10 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "alwaysOutputData": true,
+      "id": "148fbcde-efb2-4d57-89df-1550c538cb3c",
+      "name": "HTTP_FetchPage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -340,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "16e6d1eb-5a02-4d24-8186-b48601c69ca2",
+              "leftValue": "={{ $json.id ? 1 : 0 }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9731454e-4f11-4f05-8be7-5fae6c6fe60f",
+      "name": "IF_HasMorePages",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst inputData = $input.first().json;\nconst newItems = Array.isArray(inputData.items) ? inputData.items : $input.all().map(i => i.json);\n\n// Safely accumulate items even during manual node testing\nstaticData.accumulatedUsers = (staticData.accumulatedUsers || []).concat(newItems);\nstaticData.currentPage = (staticData.currentPage || 1) + 1;\n\nconst maxPages = $('Set_Config').first().json.maxPages || 10;\nconst hasHitMax = staticData.currentPage > maxPages;\n\nreturn [{\n  json: {\n    currentPage: staticData.currentPage,\n    totalAccumulatedSoFar: staticData.accumulatedUsers.length,\n    shouldContinue: !hasHitMax && newItems.length > 0\n  }\n}];"
+      },
+      "id": "1eb45c2f-e8b9-4f76-96a1-9a742880cf2e",
+      "name": "Code_AccumulatePage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        100,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst users = staticData.accumulatedUsers || [];\n\n// Unroll array into separate n8n items\nreturn users.map(user => ({ json: user }));"
+      },
+      "id": "cbe927a4-3783-4a1c-ae66-f1b2ee8fbbce",
+      "name": "Code_PrepareDataset",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        100,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 5,
+        "options": {}
+      },
+      "id": "97184c8a-773a-4be3-ab22-0cc69671d16a",
+      "name": "Loop_Over_Items",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        340,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://jsonplaceholder.typicode.com/posts",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ to: $json.email, name: $json.name, subject: \"Enterprise Operations Update\" }) }}",
+        "options": {}
+      },
+      "onError": "continueRegularOutput",
+      "id": "71e54911-3e4b-48ae-b51f-66ae6c342f2b",
+      "name": "HTTP_SendSimulatedEmail",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        600,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const item = $input.item.json;\nconst isError = item.error !== undefined || item.statusCode >= 400;\n\nreturn {\n  json: {\n    status: isError ? \"FAILED\" : \"SENT\",\n    email: item.to || $('Loop_Over_Items').item.json.email,\n    processedAt: new Date().toISOString()\n  }\n};"
+      },
+      "id": "db383ce9-75a7-471a-b62f-1e9bfd8b8cf4",
+      "name": "Code_ClassifyResult",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        820,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 2,
+        "unit": "seconds"
+      },
+      "id": "8f7eaec6-3693-4903-8822-4876b539cbcf",
+      "name": "Wait_RateLimitPause",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1040,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst totalUsers = (staticData.accumulatedUsers || []).length;\n\nreturn [{\n  json: {\n    pipelineSummary: \"BATCH_PAGINATION_COMPLETE\",\n    totalPagesHarvested: (staticData.currentPage || 2) - 1,\n    totalUsersProcessed: totalUsers,\n    completedAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "e58e378c-0f9c-449e-b9ef-609c9f28d8b8",
+      "name": "Code_BuildExecutionSummary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        240
+      ]
+    }
+  ],
+  "connections": {
+    "Manual_Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set_Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set_Config": {
+      "main": [
+        [
+          {
+            "node": "Code_InitPaging",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_InitPaging": {
+      "main": [
+        [
+          {
+            "node": "HTTP_FetchPage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP_FetchPage": {
+      "main": [
+        [
+          {
+            "node": "IF_HasMorePages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF_HasMorePages": {
+      "main": [
+        [
+          {
+            "node": "Code_AccumulatePage",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code_PrepareDataset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_AccumulatePage": {
+      "main": [
+        [
+          {
+            "node": "HTTP_FetchPage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_PrepareDataset": {
+      "main": [
+        [
+          {
+            "node": "Loop_Over_Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop_Over_Items": {
+      "main": [
+        [
+          {
+            "node": "Code_BuildExecutionSummary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP_SendSimulatedEmail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP_SendSimulatedEmail": {
+      "main": [
+        [
+          {
+            "node": "Code_ClassifyResult",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_ClassifyResult": {
+      "main": [
+        [
+          {
+            "node": "Wait_RateLimitPause",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait_RateLimitPause": {
+      "main": [
+        [
+          {
+            "node": "Loop_Over_Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
